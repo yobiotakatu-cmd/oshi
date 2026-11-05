@@ -1,0 +1,197 @@
+
+
+========== FILE: .env.example ==========
+
+VITE_FIREBASE_API_KEY=
+VITE_FIREBASE_AUTH_DOMAIN=
+VITE_FIREBASE_PROJECT_ID=
+VITE_FIREBASE_STORAGE_BUCKET=
+VITE_FIREBASE_MESSAGING_SENDER_ID=
+VITE_FIREBASE_APP_ID=
+
+========== FILE: .gitignore ==========
+
+node_modules
+dist
+.env
+.env.local
+.DS_Store
+
+========== FILE: README.md ==========
+
+# OshiStock
+
+推しグッズ管理アプリのReact + TypeScript + Viteスターターです。
+
+## 起動
+1. Node.js 20以上をインストール
+2. このフォルダで `npm install`
+3. `npm run dev`
+4. 表示されたURLをブラウザで開く
+
+## GitHubに置く
+GitHubで新しい空のリポジトリ `oshistock` を作成し、このフォルダのファイルをアップロードするか、以下を実行します。
+
+```bash
+git init
+git add .
+git commit -m "Initial OshiStock app"
+git branch -M main
+git remote add origin https://github.com/YOUR_NAME/oshistock.git
+git push -u origin main
+```
+
+## Firebase接続
+`.env.example` を `.env.local` にコピーし、Firebase Consoleで作成したWebアプリの値を設定します。Firebase Authentication / Firestore / Storage の有効化とセキュリティルールは別途必要です。APIキー等をGitHubにコミットしないでください。
+
+## 現在の実装範囲
+- ピンク/ブルーのテーマ切替
+- ホーム、グッズ一覧、集計、設定の画面
+- グッズ登録・編集・削除、画像選択、検索、公開フラグ
+- JSONバックアップ/復元
+- 取引登録の基本フォームと登録時の数量確保
+- データはブラウザのlocalStorageに保存（この段階では端末間同期なし）
+
+## 次に実装する重要機能
+Firebase認証と所有者制限、Firestore/Storage保存、数量状態変更時の厳密な巻き戻し・再適用、複数画像一括登録、画像トリミングUI、公開プロフィールと公開専用API、取引詳細/8段階の状態遷移、カテゴリ/作品/キャラクター管理、iPhoneキーボード対応。
+
+
+========== FILE: index.html ==========
+
+<!doctype html><html lang="ja"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/><meta name="theme-color" content="#fff7fa"/><title>OshiStock｜わたしの推しコレクション</title></head><body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body></html>
+
+========== FILE: package.json ==========
+
+{
+  "name": "oshistock",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "firebase": "^11.10.0",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0"
+  }
+}
+
+========== FILE: src/App.tsx ==========
+
+import {useEffect,useMemo,useState} from 'react';
+import {Home,Package,ArrowLeftRight,ChartPie,Settings,Plus,Search,Gift,Trash2,Download,Upload,Palette,ChevronRight,ImagePlus,Eye,EyeOff,Menu,X,Save} from 'lucide-react';
+import type {Item,Trade,Theme,TradeStatus} from './types';
+import {statuses} from './types';
+
+const starter:Item[]=[
+{id:'demo1',work_title:'原神',character_name:'ファルカ',item_name:'祈月飄遊記キーホルダー',item_type:'キーホルダー',category:'アクスタ・小物',image_url:'',is_public:true,purchase_price:1200,purchase_quantity:2,qty_owned:2,qty_trade:0,qty_give:0,give_price:null,give_symbol:'♡',exchange_symbol:'☆',storage_location:'自宅',memo:'',created_at:new Date().toISOString()},
+{id:'demo2',work_title:'原神',character_name:'イルーガ',item_name:'非公式グッズ',item_type:'その他',category:'その他',image_url:'',is_public:true,purchase_price:null,purchase_quantity:3,qty_owned:0,qty_trade:0,qty_give:3,give_price:null,give_symbol:'♡',exchange_symbol:'☆',storage_location:'',memo:'',created_at:new Date().toISOString()}
+];
+const emptyItem=():Item=>({id:crypto.randomUUID(),work_title:'',character_name:'',item_name:'',item_type:'缶バッジ',category:'その他',image_url:'',is_public:false,purchase_price:null,purchase_quantity:1,qty_owned:1,qty_trade:0,qty_give:0,give_price:null,give_symbol:'♡',exchange_symbol:'☆',storage_location:'',memo:'',created_at:new Date().toISOString()});
+const money=(n:number)=>new Intl.NumberFormat('ja-JP',{style:'currency',currency:'JPY',maximumFractionDigits:0}).format(n);
+type Tab='ホーム'|'グッズ'|'取引'|'集計'|'設定';
+export default function App(){
+ const [items,setItems]=useState<Item[]>(()=>JSON.parse(localStorage.getItem('oshi-items')||'null')||starter);
+ const [trades,setTrades]=useState<Trade[]>(()=>JSON.parse(localStorage.getItem('oshi-trades')||'[]'));
+ const [theme,setTheme]=useState<Theme>(()=>(localStorage.getItem('oshi-theme') as Theme)||'pink');
+ const [tab,setTab]=useState<Tab>('ホーム'),[query,setQuery]=useState(''),[filter,setFilter]=useState('すべて');
+ const [editing,setEditing]=useState<Item|null>(null),[showForm,setShowForm]=useState(false),[tradeForm,setTradeForm]=useState(false);
+ const [detail,setDetail]=useState<Item|null>(null),[notice,setNotice]=useState('');
+ useEffect(()=>{localStorage.setItem('oshi-items',JSON.stringify(items))},[items]);
+ useEffect(()=>{localStorage.setItem('oshi-trades',JSON.stringify(trades))},[trades]);
+ useEffect(()=>{localStorage.setItem('oshi-theme',theme);document.documentElement.dataset.theme=theme},[theme]);
+ const total=items.reduce((s,i)=>s+i.qty_owned+i.qty_trade+i.qty_give,0);
+ const price=items.reduce((s,i)=>s+(i.purchase_price===null?0:i.purchase_price*i.purchase_quantity),0);
+ const filtered=useMemo(()=>items.filter(i=>[i.item_name,i.work_title,i.character_name,i.memo].join(' ').toLowerCase().includes(query.toLowerCase())&&(filter==='すべて'||(filter==='所持中'?i.qty_owned>0:filter==='交換'?i.qty_trade>0:filter==='譲渡'?i.qty_give>0:i.is_public))),[items,query,filter]);
+ const saveItem=(item:Item)=>{setItems(old=>old.some(x=>x.id===item.id)?old.map(x=>x.id===item.id?item:x):[item,...old]);setShowForm(false);setEditing(null);setNotice('グッズを保存しました');};
+ const deleteItem=(id:string)=>{if(confirm('このグッズを削除しますか？')){setItems(a=>a.filter(i=>i.id!==id));setDetail(null)}};
+ const exportData=()=>{const blob=new Blob([JSON.stringify({version:1,items,trades,theme},null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`oshistock_backup_${new Date().toISOString().slice(0,10)}.json`;a.click();URL.revokeObjectURL(a.href)};
+ const importData=(f:File)=>{const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(String(r.result));if(!Array.isArray(d.items)||!Array.isArray(d.trades))throw Error('形式が違います');if(confirm('現在のデータをバックアップ内容で置き換えますか？')){setItems(d.items);setTrades(d.trades);setNotice('復元しました')}}catch{alert('バックアップファイルを読み込めませんでした')}};r.readAsText(f)};
+ const nav=[{name:'ホーム' as Tab,Icon:Home},{name:'グッズ' as Tab,Icon:Package},{name:'取引' as Tab,Icon:ArrowLeftRight},{name:'集計' as Tab,Icon:ChartPie},{name:'設定' as Tab,Icon:Settings}];
+ return <div className="app-shell">
+ <header className="top"><div className="brand-mark">●</div><div><b>OshiStock</b><small>わたしの推しコレクション</small></div><button className="add-top" onClick={()=>{setEditing(emptyItem());setShowForm(true)}}><Plus size={18}/> 登録</button></header>
+ <main className="main">
+ {tab==='ホーム'&&<><section className="hero"><h1>わたしの推しコレクション</h1><p>グッズの数量・金額・保管場所・交換や譲渡の取引まで、ひとつのアプリでまとめて管理できます。</p><button className="primary" onClick={()=>{setEditing(emptyItem());setShowForm(true)}}><Plus/> グッズを登録</button></section><div className="stats-grid"><Stat label="グッズの種類" value={`${items.length} 点`}/><Stat label="合計数量" value={`${total} 個`}/><Stat label="購入金額合計" value={money(price)}/><Stat label="取引中" value={`${trades.filter(t=>!['完了','キャンセル'].includes(t.status)).length} 件`}/></div><h2>最近登録したグッズ</h2><div className="item-list">{items.slice(0,3).map(i=><ItemCard key={i.id} item={i} onClick={()=>setDetail(i)}/>)}</div></>}
+ {tab==='グッズ'&&<><div className="section-title"><h1>グッズ一覧</h1><button className="primary small" onClick={()=>{setEditing(emptyItem());setShowForm(true)}}><Plus/> 登録</button></div><div className="search"><Search/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="グッズ名・作品名・メモなどで検索"/></div><div className="chips">{['すべて','所持中','交換','譲渡','公開中'].map(x=><button className={filter===x?'selected':''} onClick={()=>setFilter(x)}>{x}</button>)}</div><p className="muted">{filtered.length} 点が見つかりました</p><div className="item-list">{filtered.map(i=><ItemCard key={i.id} item={i} onClick={()=>setDetail(i)}/>)}</div></>}
+ {tab==='取引'&&<><h1>交換・譲渡の取引</h1><div className="action-row"><button className="primary" onClick={()=>setTradeForm(true)}><ArrowLeftRight/> 取引を登録</button></div><div className="chips">{['すべて','取引中','完了','キャンセル'].map(x=><button className={filter===x?'selected':''} onClick={()=>setFilter(x)}>{x}</button>)}</div>{trades.filter(t=>filter==='すべて'||(filter==='取引中'?!['完了','キャンセル'].includes(t.status):t.status===filter)).map(t=><div className="trade-card"><b>{t.trade_type==='exchange'?'交換':'譲渡'}・{t.partner_name||'相手未入力'}</b><span className="badge">{t.status}</span><p>{t.lines.map(l=>items.find(i=>i.id===l.item_id)?.item_name||'削除済みグッズ').join('、')}</p><button className="text-button" onClick={()=>{if(confirm('この取引を削除しますか？'))setTrades(a=>a.filter(x=>x.id!==t.id))}}>削除</button></div>)}</>}
+ {tab==='集計'&&<><h1>購入金額・数量の集計</h1><div className="stats-grid"><Stat label="購入金額の合計" value={money(price)}/><Stat label="合計数量" value={`${total} 個`}/><Stat label="グッズの種類" value={`${items.length} 点`}/></div><p className="note">購入価格が未入力のグッズは合計金額に含めていません。</p><h2>作品別</h2>{Object.entries(items.reduce((a,i)=>({...a,[i.work_title||'作品未設定']:(a[i.work_title||'作品未設定']||0)+i.qty_owned+i.qty_trade+i.qty_give}),{} as Record<string,number>)).map(([k,v])=><div className="work-row"><b>{k}</b><span>{v} 個</span></div>)}</>}
+ {tab==='設定'&&<><h1>設定</h1><section className="panel"><h2><Palette/> テーマ</h2><div className="theme-row"><button className={theme==='pink'?'theme-choice active':'theme-choice'} onClick={()=>setTheme('pink')}>● ピンク<br/><small>やさしくてかわいい雰囲気</small></button><button className={theme==='blue'?'theme-choice active':'theme-choice'} onClick={()=>setTheme('blue')}>● ブルー<br/><small>すっきり爽やかな雰囲気</small></button></div></section><section className="panel"><h2>データと管理</h2><button className="setting-row" onClick={exportData}><Download/> バックアップを書き出す <ChevronRight/></button><label className="setting-row"><Upload/> バックアップを復元<input type="file" accept="application/json" hidden onChange={e=>e.target.files?.[0]&&importData(e.target.files[0])}/><ChevronRight/></label><button className="setting-row" onClick={()=>alert('公開プロフィールとFirebase連携は次の実装ステップで有効化します。')}><Eye/> 公開プロフィールの設定 <ChevronRight/></button></section><p className="muted">この試作版のデータは現在のブラウザ内に保存されます。端末間同期にはFirebase設定が必要です。</p></>}
+ </main>
+ <nav className="bottom-nav">{nav.map(({name,Icon})=><button className={tab===name?'active':''} onClick={()=>{setTab(name);setQuery('');setFilter('すべて')}}><Icon/><span>{name}</span></button>)}</nav>
+ {notice&&<div className="toast" onClick={()=>setNotice('')}>{notice}　×</div>}
+ {showForm&&editing&&<ItemEditor item={editing} onClose={()=>{setShowForm(false);setEditing(null)}} onSave={saveItem}/>}
+ {detail&&<div className="overlay" onClick={()=>setDetail(null)}><div className="modal" onClick={e=>e.stopPropagation()}><button className="close" onClick={()=>setDetail(null)}><X/></button><div className="detail-image">{detail.image_url?<img src={detail.image_url}/>:<Package size={54}/>}</div><h2>{detail.item_name}</h2><p>{detail.work_title} ／ {detail.character_name}</p><div className="detail-stats"><span>所持 {detail.qty_owned}</span><span>交換 {detail.qty_trade}</span><span>譲渡 {detail.qty_give}</span></div><p>購入金額：{detail.purchase_price===null?'未入力':money(detail.purchase_price*detail.purchase_quantity)}</p><p>保管場所：{detail.storage_location||'未入力'}</p><p>{detail.memo}</p><button className="primary full" onClick={()=>{setEditing(detail);setDetail(null);setShowForm(true)}}>編集する</button><button className="danger full" onClick={()=>deleteItem(detail.id)}><Trash2/> 削除する</button></div></div>}
+ {tradeForm&&<TradeEditor items={items} onClose={()=>setTradeForm(false)} onSave={t=>{if(t.stock_mode==='linked'){setItems(a=>a.map(i=>i.id===t.lines[0].item_id?{...i,qty_owned:i.qty_owned-t.lines[0].quantity,qty_trade:i.qty_trade+(t.trade_type==='exchange'?t.lines[0].quantity:0),qty_give:i.qty_give+(t.trade_type==='give'?t.lines[0].quantity:0)}:i))}setTrades(a=>[t,...a]);setTradeForm(false)}}/>}
+ </div>
+}
+function Stat({label,value}:{label:string,value:string}){return <div className="stat"><span>{label}</span><strong>{value}</strong></div>}
+function ItemCard({item,onClick}:{item:Item,onClick:()=>void}){return <button className="item-card" onClick={onClick}><div className="thumb">{item.image_url?<img src={item.image_url}/>:<Package/>}</div><div className="item-info"><b>{item.item_name}</b><small>{item.work_title||'作品未入力'} ／ {item.character_name||'キャラ未入力'}</small><div className="counts"><i>所持 {item.qty_owned}</i><i className="lavender">交換 {item.qty_trade}</i><i className="peach">譲渡 {item.qty_give}</i></div></div><div className="item-price">{item.purchase_price===null?'未入力':money(item.purchase_price*item.purchase_quantity)}<small>合計 {item.qty_owned+item.qty_trade+item.qty_give} 個</small></div></button>}
+function ItemEditor({item,onClose,onSave}:{item:Item,onClose:()=>void,onSave:(i:Item)=>void}){
+ const [v,setV]=useState(item);const set=(k:keyof Item,x:any)=>setV(a=>({...a,[k]:x}));
+ const updateQty=(k:'purchase_quantity'|'qty_owned',n:number)=>setV(a=>({...a,[k]:n,purchase_quantity:n,qty_owned:n}));
+ const file=(f?:File)=>{if(!f)return;const r=new FileReader();r.onload=()=>set('image_url',String(r.result));r.readAsDataURL(f)};
+ return <div className="overlay"><div className="modal form-modal"><div className="modal-head"><h2>{item.item_name?'グッズを編集':'グッズを登録'}</h2><button className="close" onClick={onClose}><X/></button></div><label className="photo-pick">{v.image_url?<img src={v.image_url}/>:<><ImagePlus/><span>写真を選択</span></>}<input type="file" accept="image/*" onChange={e=>file(e.target.files?.[0])}/></label>
+ {([['item_name','グッズ名 *'],['work_title','作品名'],['character_name','キャラクター名'],['item_type','グッズ種類'],['category','カテゴリ'],['storage_location','保管場所']] as const).map(([k,l])=><label className="field">{l}<input value={String(v[k]??'')} onChange={e=>set(k,e.target.value)}/></label>)}
+ <div className="two"><label className="field">購入単価<input type="number" min="0" value={v.purchase_price??''} placeholder="未入力" onChange={e=>set('purchase_price',e.target.value===''?null:Number(e.target.value))}/></label><label className="field">購入数<input type="number" min="0" value={v.purchase_quantity} onChange={e=>updateQty('purchase_quantity',Math.max(0,Number(e.target.value)))}/></label></div>
+ <label className="field">所持中<input type="number" min="0" value={v.qty_owned} onChange={e=>updateQty('qty_owned',Math.max(0,Number(e.target.value)))}/></label>
+ <div className="two"><label className="field">交換で確保<input type="number" min="0" value={v.qty_trade} onChange={e=>set('qty_trade',Math.max(0,Number(e.target.value)))}/></label><label className="field">譲渡で確保<input type="number" min="0" value={v.qty_give} onChange={e=>set('qty_give',Math.max(0,Number(e.target.value)))}/></label></div>
+ <label className="field">譲渡金額<input type="number" min="0" value={v.give_price??''} onChange={e=>set('give_price',e.target.value===''?null:Number(e.target.value))}/></label>
+ <label className="field">メモ<textarea value={v.memo} onChange={e=>set('memo',e.target.value)}/></label><label className="check"><input type="checkbox" checked={v.is_public} onChange={e=>set('is_public',e.target.checked)}/> 公開プロフィールに表示する</label>
+ <button className="primary full" disabled={!v.item_name.trim()} onClick={()=>onSave(v)}><Save/> 保存する</button></div></div>
+}
+function TradeEditor({items,onClose,onSave}:{items:Item[],onClose:()=>void,onSave:(t:Trade)=>void}){
+ const [type,setType]=useState<'exchange'|'give'>('exchange'),[itemId,setItemId]=useState(items[0]?.id||''),[qty,setQty]=useState(1),[partner,setPartner]=useState(''),[status,setStatus]=useState<TradeStatus>('募集中'),[record,setRecord]=useState(false),[desired,setDesired]=useState('');
+ const save=()=>{const it=items.find(i=>i.id===itemId);if(!it||qty<1)return;if(!record&&it.qty_owned<qty){alert('所持中の数量が足りません');return}onSave({id:crypto.randomUUID(),trade_type:type,status,stock_mode:record?'record':'linked',lines:[{item_id:itemId,quantity:qty}],partner_name:partner,partner_sns:'',desired_work:'',desired_item:desired,desired_quantity:1,amount:null,handover_method:'郵送',handover_note:'',start_date:new Date().toISOString().slice(0,10),memo:''})};
+ return <div className="overlay"><div className="modal form-modal"><div className="modal-head"><h2>取引を登録</h2><button className="close" onClick={onClose}><X/></button></div><div className="chips"><button className={type==='exchange'?'selected':''} onClick={()=>setType('exchange')}>交換</button><button className={type==='give'?'selected':''} onClick={()=>setType('give')}>譲渡</button></div><label className="field">対象グッズ<select value={itemId} onChange={e=>setItemId(e.target.value)}>{items.map(i=><option value={i.id}>{i.item_name}</option>)}</select></label><label className="field">数量<input type="number" min="1" max="999" value={qty} onChange={e=>setQty(Number(e.target.value))}/></label>{type==='exchange'&&<label className="field">希望するグッズ<input value={desired} onChange={e=>setDesired(e.target.value)} placeholder="作品名・グッズ名"/></label>}<label className="field">取引相手<input value={partner} onChange={e=>setPartner(e.target.value)}/></label><label className="field">状況<select value={status} onChange={e=>setStatus(e.target.value as TradeStatus)}>{statuses.map(s=><option>{s}</option>)}</select></label><label className="check"><input type="checkbox" checked={record} onChange={e=>setRecord(e.target.checked)}/> 記録のみ（グッズ数量を動かさない）</label><p className="note">{record?'記録のみで保存します。数量は変わりません。':`保存すると所持中 ${qty} 個を${type==='exchange'?'交換':'譲渡'}で確保します。`}</p><button className="primary full" onClick={save}>取引を保存</button></div></div>
+}
+
+
+========== FILE: src/firebase.ts ==========
+
+import { initializeApp, getApps } from 'firebase/app'; import { getAuth } from 'firebase/auth'; import { getFirestore } from 'firebase/firestore'; import { getStorage } from 'firebase/storage';
+const config={apiKey:import.meta.env.VITE_FIREBASE_API_KEY,authDomain:import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,projectId:import.meta.env.VITE_FIREBASE_PROJECT_ID,storageBucket:import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,messagingSenderId:import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,appId:import.meta.env.VITE_FIREBASE_APP_ID};
+export const firebaseReady=!!config.apiKey&&!!config.projectId; const app=firebaseReady?(getApps()[0]??initializeApp(config)):null;
+export const auth=app?getAuth(app):null; export const db=app?getFirestore(app):null; export const storage=app?getStorage(app):null;
+
+
+========== FILE: src/main.tsx ==========
+
+import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App'; import './style.css'; ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+
+========== FILE: src/style.css ==========
+
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700;800&display=swap');
+:root{font-family:'Noto Sans JP',system-ui,sans-serif;color:#443640;background:#fffafb;font-synthesis:none;--accent:#ee75a5;--accent-soft:#fff0f5;--text:#443640;--muted:#9a8493;--line:#f5e5ec;--card:#fff;--shadow:0 3px 12px #5632460b}
+:root[data-theme=blue]{--accent:#65aee0;--accent-soft:#eef8ff;--line:#e3eff8}
+*{box-sizing:border-box}body{margin:0;background:#fffafb}button,input,select,textarea{font:inherit}button{cursor:pointer;color:inherit}.app-shell{max-width:760px;min-height:100dvh;margin:auto;background:#fffafb;padding-bottom:100px}.top{height:82px;background:#fff;display:flex;align-items:center;gap:14px;padding:12px 20px;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}.brand-mark{width:36px;height:36px;border-radius:50%;background:#ff790f;color:#ff790f;display:grid;place-items:center;font-size:0}.brand-mark:after{content:'';width:28px;height:8px;background:#fff;border-radius:8px}.top b{font-size:20px;letter-spacing:.02em}.top small{display:block;color:var(--muted);font-size:12px}.add-top{margin-left:auto;border:0;border-radius:30px;background:var(--accent);color:#fff;padding:12px 18px;display:flex;align-items:center;gap:4px;font-weight:700}.main{padding:22px 18px 32px}h1{font-size:25px;margin:8px 0 22px;font-weight:800}h2{font-size:19px;margin:25px 0 14px}.hero{background:linear-gradient(135deg,#fff2f7,#ffe8f1);border-radius:28px;padding:26px 22px;margin-bottom:24px}.hero h1{font-size:27px;margin:0 0 12px}.hero p{line-height:1.9;color:var(--muted);margin:0 0 18px}.primary{border:0;border-radius:28px;background:var(--accent);color:white;padding:13px 20px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 3px 7px #49304114}.primary:disabled{opacity:.4}.primary.small{padding:10px 16px}.full{width:100%;margin-top:12px}.stats-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:22px 0}.stat{background:var(--card);border:1px solid var(--line);border-radius:25px;padding:20px 17px;min-height:112px}.stat span{display:block;color:var(--muted);font-size:13px;margin-bottom:9px}.stat strong{font-size:25px;font-weight:800;overflow-wrap:anywhere}.section-title{display:flex;align-items:center;justify-content:space-between}.section-title h1{margin:8px 0 20px}.search{height:54px;border:1px solid var(--line);border-radius:30px;background:white;display:flex;align-items:center;gap:10px;padding:0 16px;box-shadow:var(--shadow);color:var(--muted);margin:14px 0}.search input{border:0;outline:0;min-width:0;width:100%;font-size:15px}.chips{display:flex;gap:8px;flex-wrap:wrap;margin:15px 0}.chips button{border:0;border-radius:25px;background:var(--accent-soft);padding:9px 16px;color:#96506d;font-weight:700}.chips button.selected{background:var(--accent);color:white}.muted{color:var(--muted);font-size:13px}.item-list{display:grid;gap:12px}.item-card{width:100%;display:flex;align-items:center;gap:12px;text-align:left;background:white;border:1px solid var(--line);border-radius:25px;padding:13px;box-shadow:none}.thumb{width:78px;height:78px;flex:none;border-radius:20px;background:#fff5e8;display:grid;place-items:center;color:#bd9da9;overflow:hidden}.thumb img,.detail-image img,.photo-pick img{width:100%;height:100%;object-fit:cover}.item-info{min-width:0;flex:1}.item-info b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.item-info small,.item-price small{display:block;color:var(--muted);font-size:12px;margin-top:5px}.counts{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.counts i{font-style:normal;background:#e8f7f3;color:#3aa996;border-radius:20px;padding:3px 8px;font-size:11px}.counts .lavender{background:#f4edfc;color:#9a70ca}.counts .peach{background:#fff0e8;color:#c47c54}.item-price{font-size:13px;font-weight:700;text-align:right;white-space:nowrap}.bottom-nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(760px,100%);height:78px;padding:8px 5px max(8px,env(safe-area-inset-bottom));background:#ffffffed;backdrop-filter:blur(12px);border-top:1px solid var(--line);display:flex;justify-content:space-around;z-index:8}.bottom-nav button{border:0;background:none;color:#927d8c;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;min-width:50px}.bottom-nav svg{width:24px;height:24px}.bottom-nav button.active{color:var(--accent);font-weight:700}.panel{background:#fff;border:1px solid var(--line);border-radius:25px;padding:18px;margin:16px 0}.panel h2{margin:0 0 16px;display:flex;gap:8px;align-items:center}.theme-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.theme-choice{border:2px solid var(--line);border-radius:20px;background:#fff;padding:15px;text-align:left;font-weight:700}.theme-choice.active{border-color:var(--accent)}.theme-choice:first-letter{color:var(--accent)}.theme-choice small{font-weight:400;color:var(--muted)}.setting-row{width:100%;border:0;border-bottom:1px solid var(--line);background:white;padding:17px 5px;display:flex;align-items:center;gap:12px;text-align:left;font-weight:600}.setting-row svg:last-child{margin-left:auto;color:var(--muted)}.note{background:#fff3f7;border:1px solid var(--line);border-radius:20px;padding:14px;color:var(--muted);font-size:13px;line-height:1.7}.work-row{display:flex;justify-content:space-between;padding:15px;border-bottom:1px solid var(--line)}.action-row{margin:15px 0}.trade-card{background:white;border:1px solid var(--line);border-radius:22px;padding:16px;margin:12px 0}.badge{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:20px;padding:4px 10px;margin-left:8px;font-size:12px}.text-button,.danger{border:0;background:none;color:#c65b76}.overlay{position:fixed;inset:0;background:#30202b70;z-index:20;display:flex;align-items:flex-end;justify-content:center;padding:12px}.modal{position:relative;background:#fffafb;border-radius:28px 28px 18px 18px;padding:24px 20px;max-height:92dvh;overflow:auto;width:min(560px,100%);box-shadow:0 12px 50px #0002}.form-modal{padding-bottom:28px}.modal-head{display:flex;align-items:center;justify-content:space-between}.modal-head h2{margin:0 0 16px}.close{border:0;background:transparent;padding:5px;color:var(--muted)}.detail-image{width:140px;height:140px;margin:10px auto 18px;background:#fff1f5;border-radius:25px;display:grid;place-items:center;overflow:hidden;color:var(--muted)}.modal>h2{text-align:center;margin:10px 0}.modal>p{text-align:center;color:var(--muted)}.detail-stats{display:flex;justify-content:center;gap:8px;flex-wrap:wrap}.detail-stats span{background:var(--accent-soft);padding:8px 12px;border-radius:20px}.danger.full{padding:12px;border:1px solid var(--line);border-radius:25px;margin-top:8px}.field{display:block;font-size:13px;font-weight:700;color:#725c6a;margin:13px 0}.field input,.field select,.field textarea{display:block;width:100%;border:1px solid var(--line);border-radius:14px;background:white;padding:12px;margin-top:6px;outline-color:var(--accent);color:var(--text)}.field textarea{min-height:80px;resize:vertical}.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.photo-pick{width:112px;height:112px;margin:12px auto 18px;border:1px dashed var(--accent);border-radius:20px;background:var(--accent-soft);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--accent);overflow:hidden;font-size:12px}.photo-pick input{display:none}.photo-pick img{object-fit:cover}.check{display:flex;gap:8px;align-items:center;margin:16px 0;font-size:14px}.toast{position:fixed;top:92px;left:50%;transform:translateX(-50%);z-index:30;background:#43323d;color:white;padding:10px 18px;border-radius:25px;font-size:13px}
+@media(min-width:700px){.app-shell{border-left:1px solid var(--line);border-right:1px solid var(--line)}.main{padding:28px 30px}.overlay{align-items:center}.modal{border-radius:28px}.hero{padding:34px}.hero h1{font-size:32px}}
+
+
+========== FILE: src/types.ts ==========
+
+export type Theme = 'pink'|'blue';
+export type Item = {id:string;work_title:string;character_name:string;item_name:string;item_type:string;category:string;image_url:string;is_public:boolean;purchase_price:number|null;purchase_quantity:number;qty_owned:number;qty_trade:number;qty_give:number;give_price:number|null;give_symbol:string;exchange_symbol:string;storage_location:string;memo:string;created_at:string};
+export type TradeStatus='募集中'|'連絡待ち'|'条件確認中'|'発送待ち'|'発送済み'|'受け取り待ち'|'完了'|'キャンセル';
+export type TradeLine={item_id:string;quantity:number};
+export type Trade={id:string;trade_type:'exchange'|'give';status:TradeStatus;stock_mode:'linked'|'record';lines:TradeLine[];partner_name:string;partner_sns:string;desired_work:string;desired_item:string;desired_quantity:number;amount:number|null;handover_method:string;handover_note:string;start_date:string;memo:string};
+export const statuses:TradeStatus[]=['募集中','連絡待ち','条件確認中','発送待ち','発送済み','受け取り待ち','完了','キャンセル'];
+
+
+========== FILE: tsconfig.json ==========
+
+{"compilerOptions":{"target":"ES2020","useDefineForClassFields":true,"lib":["ES2020","DOM","DOM.Iterable"],"allowImportingTsExtensions":true,"skipLibCheck":true,"esModuleInterop":true,"allowSyntheticDefaultImports":true,"strict":true,"forceConsistentCasingInFileNames":true,"module":"ESNext","moduleResolution":"Bundler","resolveJsonModule":true,"isolatedModules":true,"noEmit":true,"jsx":"react-jsx"},"include":["src"]}
+
+========== FILE: vite.config.ts ==========
+
+import { defineConfig } from 'vite'; import react from '@vitejs/plugin-react'; export default defineConfig({plugins:[react()]});
