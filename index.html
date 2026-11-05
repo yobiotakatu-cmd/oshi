@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OshiStock - 推しグッズ管理</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#f472b6',
+                        secondary: '#fbcfe8',
+                        background: '#fff1f2'
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- React & ReactDOM & Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-[#fff5f5] text-gray-800 font-sans pb-24">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        function App() {
+            const [tab, setTab] = React.useState('home');
+            const [items, setItems] = React.useState(() => {
+                const saved = localStorage.getItem('oshistock_items');
+                return saved ? JSON.parse(saved) : [];
+            });
+            const [modalOpen, setModalOpen] = React.useState(false);
+            
+            // フォームの状態
+            const [form, setForm] = React.useState({
+                name: '', character: '', work: '', price: '', image: '',
+                owned: 1, trade: 0, give: 0, location: '', memo: ''
+            });
+
+            React.useEffect(() => {
+                localStorage.setItem('oshistock_items', JSON.stringify(items));
+            }, [items]);
+
+            const handleImageUpload = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        setForm({...form, image: reader.result});
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                const newItem = {
+                    id: Date.now(),
+                    ...form,
+                    owned: Number(form.owned),
+                    trade: Number(form.trade),
+                    give: Number(form.give),
+                    price: Number(form.price) || 0
+                };
+                setItems([newItem, ...items]);
+                setModalOpen(false);
+                setForm({ name: '', character: '', work: '', price: '', image: '', owned: 1, trade: 0, give: 0, location: '', memo: '' });
+            };
+
+            const deleteItem = (id) => {
+                if(confirm('このグッズを削除しますか？')) {
+                    setItems(items.filter(item => item.id !== id));
+                }
+            };
+
+            const totalQty = items.reduce((sum, item) => sum + item.owned + item.trade + item.give, 0);
+            const totalSpent = items.reduce((sum, item) => sum + (item.price * (item.owned + item.trade + item.give)), 0);
+
+            return (
+                <div className="max-w-md mx-auto min-h-screen flex flex-col justify-between">
+                    {/* ヘッダー */}
+                    <header className="bg-white px-4 py-3 shadow-sm sticky top-0 z-10 flex justify-between items-center">
+                        <div>
+                            <h1 className="text-xl font-bold text-pink-500">OshiStock</h1>
+                            <p className="text-xs text-gray-400">わたしの推しコレクション</p>
+                        </div>
+                        <button 
+                            onClick={() => setModalOpen(true)}
+                            className="bg-pink-400 text-white px-4 py-2 rounded-full text-sm font-bold shadow hover:bg-pink-500 transition"
+                        >
+                            + 登録
+                        </button>
+                    </header>
+
+                    {/* メインコンテンツ */}
+                    <main className="p-4 flex-1">
+                        {tab === 'home' && (
+                            <div className="space-y-4">
+                                <div className="bg-gradient-to-r from-pink-400 to-rose-400 text-white p-5 rounded-2xl shadow-md">
+                                    <h2 className="text-lg font-bold">わたしの推しコレクション</h2>
+                                    <p className="text-xs opacity-90 mt-1">グッズの数量・金額・保管場所を一括管理</p>
+                                    <button 
+                                        onClick={() => setModalOpen(true)}
+                                        className="mt-4 bg-white text-pink-500 px-4 py-2 rounded-xl text-sm font-bold shadow w-full"
+                                    >
+                                        + グッズを登録する
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-pink-100">
+                                        <p className="text-xs text-gray-400">グッズの種類</p>
+                                        <p className="text-2xl font-bold text-gray-700 mt-1">{items.length} <span className="text-sm font-normal">点</span></p>
+                                    </div>
+                                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-pink-100">
+                                        <p className="text-xs text-gray-400">合計数量</p>
+                                        <p className="text-2xl font-bold text-gray-700 mt-1">{totalQty} <span className="text-sm font-normal">個</span></p>
+                                    </div>
+                                </div>
+
+                                <div className="bg-white p-4 rounded-2xl shadow-sm border border-pink-100">
+                                    <h3 className="font-bold text-sm text-gray-600 mb-3">最近登録したグッズ</h3>
+                                    {items.length === 0 ? (
+                                        <p className="text-xs text-gray-400 text-center py-6">まだグッズが登録されていません。「+ 登録」から追加してみましょう！</p>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {items.slice(0, 5).map(item => (
+                                                <div key={item.id} className="flex items-center gap-3 p-2 bg-pink-50/50 rounded-xl">
+                                                    {item.image ? (
+                                                        <img src={item.image} className="w-12 h-12 object-cover rounded-lg" />
+                                                    ) : (
+                                                        <div className="w-12 h-12 bg-pink-100 rounded-lg flex items-center justify-center text-xs text-pink-400">画像無</div>
+                                                    )}
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-xs text-pink-500 font-semibold truncate">{item.work || '作品名なし'}</p>
+                                                        <p className="text-sm font-bold truncate">{item.name}</p>
+                                                        <div className="flex gap-2 text-[10px] text-gray-500 mt-0.5">
+                                                            <span className="bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">所持: {item.owned}</span>
+                                                            {item.trade > 0 && <span className="bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded">交換: {item.trade}</span>}
+                                                            {item.give > 0 && <span className="bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">譲渡: {item.give}</span>}
+                                                        </div>
+                                                    </div>
+                                                    <button onClick={() => deleteItem(item.id)} className="text-gray-300 hover:text-red-400 p-2 text-xs">✕</button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {tab === 'goods' && (
+                            <div className="space-y-3">
+                                <h2 className="font-bold text-gray-700 mb-2">グッズ一覧 ({items.length}件)</h2>
+                                {items.length === 0 ? (
+                                    <p className="text-center text-gray-400 py-12 text-sm">グッズがありません</p>
+                                ) : (
+                                    items.map(item => (
+                                        <div key={item.id} className="bg-white p-3 rounded-2xl shadow-sm border border-pink-100 flex gap-3 items-center">
+                                            {item.image ? (
+                                                <img src={item.image} className="w-16 h-16 object-cover rounded-xl" />
+                                            ) : (
+                                                <div className="w-16 h-16 bg-pink-100 rounded-xl flex items-center justify-center text-xs text-pink-400">No Image</div>
+                                            )}
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-[10px] text-pink-500 font-bold">{item.work} / {item.character}</p>
+                                                <h4 className="font-bold text-sm truncate">{item.name}</h4>
+                                                <div className="flex gap-2 text-xs mt-1">
+                                                    <span className="bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full font-medium">所持: {item.owned}</span>
+                                                    <span className="bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full font-medium">交換: {item.trade}</span>
+                                                    <span className="bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full font-medium">譲渡: {item.give}</span>
+                                                </div>
+                                            </div>
+                                            <button onClick={() => deleteItem(item.id)} className="text-gray-300 hover:text-red-500 p-2">🗑️</button>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        )}
+
+                        {tab === 'analytics' && (
+                            <div className="space-y-4">
+                                <h2 className="font-bold text-gray-700">集計・金額</h2>
+                                <div className="bg-white p-5 rounded-2xl shadow-sm border border-pink-100 space-y-3">
+                                    <div>
+                                        <p className="text-xs text-gray-400">総購入金額（推定）</p>
+                                        <p className="text-3xl font-bold text-pink-500 mt-1">¥{totalSpent.toLocaleString()}</p>
+                                    </div>
+                                    <div className="border-t pt-3 flex justify-between text-sm">
+                                        <span className="text-gray-500">登録グッズ種類</span>
+                                        <span className="font-bold">{items.length} 点</span>
+                                    </div>
+                                    <div className="flex justify-between text-sm">
+                                        <span className="text-gray-500">総アイテム個数</span>
+                                        <span className="font-bold">{totalQty} 個</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {tab === 'settings' && (
+                            <div className="space-y-4">
+                                <h2 className="font-bold text-gray-700">設定・データ</h2>
+                                <div className="bg-white p-5 rounded-2xl shadow-sm border border-pink-100 space-y-3">
+                                    <p className="text-xs text-gray-500">データはすべてお使いのスマホ（ブラウザ）内に安全に保存されています。課金や外部サーバーの制限はありません。</p>
+                                    <button 
+                                        onClick={() => {
+                                            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(items));
+                                            const dlAnchorElem = document.createElement('a');
+                                            dlAnchorElem.setAttribute("href", dataStr);
+                                            dlAnchorElem.setAttribute("download", "oshistock_backup.json");
+                                            dlAnchorElem.click();
+                                        }}
+                                        className="w-full bg-pink-100 text-pink-600 py-2.5 rounded-xl text-sm font-bold hover:bg-pink-200 transition"
+                                    >
+                                        バックアップを書き出す（JSON）
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* 登録モーダル */}
+                    {modalOpen && (
+                        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+                            <div className="bg-white w-full max-w-md rounded-t-3xl sm:rounded-2xl max-h-[90vh] overflow-y-auto p-5 space-y-4">
+                                <div className="flex justify-between items-center border-b pb-3">
+                                    <h3 className="font-bold text-lg text-pink-500">グッズを登録</h3>
+                                    <button onClick={() => setModalOpen(false)} className="text-gray-400 font-bold text-lg">✕</button>
+                                </div>
+                                <form onSubmit={handleSubmit} className="space-y-3 text-sm">
+                                    <div>
+                                        <label className="block text-xs text-gray-500 mb-1">グッズ画像</label>
+                                        <input type="file" accept="image/*" onChange={handleImageUpload} className="w-full text-xs text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-pink-50 file:text-pink-500 hover:file:bg-pink-100"/>
+                                        {form.image && <img src={form.image} className="mt-2 w-20 h-20 object-cover rounded-xl border"/>}
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-500 mb-1">作品名</label>
+                                        <input type="text" value={form.work} onChange={e=>setForm({...form, work: e.target.value})} placeholder="例: Fate/Grand Order" className="w-full border rounded-xl p-2.5 focus:outline-pink-400" required/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-500 mb-1">キャラクター名</label>
+                                        <input type="text" value={form.character} onChange={e=>setForm({...form, character: e.target.value})} placeholder="例: ジャンヌ・オルタ" className="w-full border rounded-xl p-2.5 focus:outline-pink-400"/>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-500 mb-1">グッズ名</label>
+                                        <input type="text" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} placeholder="例: 缶バッジ" className="w-full border rounded-xl p-2.5 focus:outline-pink-400" required/>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2">
+                                        <div>
+                                            <label className="block text-[10px] text-gray-500 mb-1">所持中</label>
+                                            <input type="number" min="0" value={form.owned} onChange={e=>setForm({...form, owned: e.target.value})} className="w-full border rounded-xl p-2 text-center" required/>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] text-gray-500 mb-1">交換確保</label>
+                                            <input type="number" min="0" value={form.trade} onChange={e=>setForm({...form, trade: e.target.value})} className="w-full border rounded-xl p-2 text-center"/>
+                                        </div>
+                                        <div>
+                                            <label className="block text-[10px] text-gray-500 mb-1">譲渡確保</label>
+                                            <input type="number" min="0" value={form.give} onChange={e=>setForm({...form, give: e.target.value})} className="w-full border rounded-xl p-2 text-center"/>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label className="block text-xs text-gray-500 mb-1">購入価格 (1個あたり単価)</label>
+                                        <input type="number" min="0" value={form.price} onChange={e=>setForm({...form, price: e.target.value})} placeholder="例: 500" className="w-full border rounded-xl p-2.5"/>
+                                    </div>
+                                    <button type="submit" className="w-full bg-pink-400 text-white py-3 rounded-xl font-bold shadow hover:bg-pink-500 transition mt-4">
+                                        登録する
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ボトムナビゲーション */}
+                    <nav className="bg-white border-t fixed bottom-0 left-0 right-0 max-w-md mx-auto flex justify-around py-2.5 px-2 text-xs text-gray-400 shadow-lg">
+                        <button onClick={() => setTab('home')} className={`flex flex-col items-center flex-1 ${tab === 'home' ? 'text-pink-500 font-bold' : ''}`}>
+                            <span>🏠</span><span className="mt-0.5">ホーム</span>
+                        </button>
+                        <button onClick={() => setTab('goods')} className={`flex flex-col items-center flex-1 ${tab === 'goods' ? 'text-pink-500 font-bold' : ''}`}>
+                            <span>📦</span><span className="mt-0.5">グッズ</span>
+                        </button>
+                        <button onClick={() => setTab('analytics')} className={`flex flex-col items-center flex-1 ${tab === 'analytics' ? 'text-pink-500 font-bold' : ''}`}>
+                            <span>📊</span><span className="mt-0.5">集計</span>
+                        </button>
+                        <button onClick={() => setTab('settings')} className={`flex flex-col items-center flex-1 ${tab === 'settings' ? 'text-pink-500 font-bold' : ''}`}>
+                            <span>⚙️</span><span className="mt-0.5">設定</span>
+                        </button>
+                    </nav>
+                </div>
+            );
+        }
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
